@@ -1,0 +1,1308 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+
+  "Description": "data/hubs_data_processed_s3bucket.json: CloudFormation Template to create S3 buckets for hubs data",
+
+  "Parameters": {
+    "Environment": {
+      "Description": "The environment",
+      "Type": "String"
+    },
+
+    "Project": {
+      "Description": "The project",
+      "Type": "String"
+    },
+
+    "Component": {
+      "Description": "The component",
+      "Type": "String"
+    },
+
+    "Category": {
+      "Description": "The category",
+      "Type": "String"
+    },
+
+    "User": {
+      "Description": "The user",
+      "Type": "String",
+      "Default": "undefined"
+    },
+
+    "ZoneOrStage": {
+      "Description": "Type for the s3 bucket",
+      "Type": "String",
+      "AllowedPattern": "zone|stage",
+      "ConstraintDescription": "must be either zone or stage"
+    },
+
+    "ReadAccessAccountArns": {
+      "Description": "External account arns that are permitted to have read access",
+      "Type": "CommaDelimitedList",
+      "Default": "undefined"
+    },
+
+    "WriteAccessAccountArns": {
+      "Description": "External account arns that are permitted to have write access",
+      "Type": "CommaDelimitedList",
+      "Default": "undefined"
+    },
+
+    "EncryptAtRest": {
+      "Description": "Set to true to enforce data at rest to be stored using kms encryption",
+      "Type": "String",
+      "AllowedPattern": "true|false",
+      "ConstraintDescription": "must be either true or false",
+      "Default": "true"
+    },
+
+    "S3VersioningRequired": {
+      "Description": "Set to true to switch on file versioning",
+      "Type": "String",
+      "AllowedPattern": "true|false",
+      "ConstraintDescription": "must be either true or false",
+      "Default": "false"
+    },
+
+    "BucketKMSKeyArn": {
+      "Description": "KMSkey for bucket policy",
+      "Type": "String",
+      "Default": "undefined"
+    },
+    "NotificationSnsTopic": {
+      "Description": "Notification SNS Topic",
+      "Type": "String",
+      "Default": "undefined"
+    },
+    "PublishCopyFileS3SNSTopic": {
+      "Description": "Notification SNS Topic for copy-file-lambda",
+      "Type": "String",
+      "Default": "undefined"
+    },
+    "DIStudioLambdaARN": {
+      "Description": "Lambda to trigger the shell script in SAS DI Studio",
+      "Type": "String"
+    }
+  },
+
+  "Mappings": {},
+
+  "Conditions": {
+    "CreateForUser": { "Fn::Not": [ { "Fn::Equals": [ "undefined", { "Ref": "User" } ] } ] },
+    "ReadAccessDefined": { "Fn::Not": [ { "Fn::Equals": [ "undefined", { "Fn::Select": [ "0", { "Ref": "ReadAccessAccountArns" } ] } ] } ] },
+    "WriteAccessDefined": { "Fn::Not": [ { "Fn::Equals": [ "undefined", { "Fn::Select": [ "0", { "Ref": "WriteAccessAccountArns" } ] } ] } ] },
+    "IsStage": { "Fn::Equals": [ "stage", { "Ref": "ZoneOrStage" } ] },
+    "IsZone": { "Fn::Equals": [ "zone", { "Ref": "ZoneOrStage" } ] },
+    "IsEncrypted": { "Fn::Equals": [ "true", { "Ref": "EncryptAtRest" } ] },
+    "ApplyPolicy": { "Fn::Or": [
+      { "Condition": "ReadAccessDefined" },
+      { "Condition": "WriteAccessDefined" },
+      { "Condition": "IsEncrypted" }
+    ] },
+    "VersioningIsRequired": { "Fn::Equals": [ "true", { "Ref": "S3VersioningRequired" } ] },
+    "CreateTestEvents": {
+            "Fn::Equals": [
+                {
+                    "Ref": "Environment"
+                },
+                "test"
+            ]
+        }
+  },
+
+  "Resources": {
+    "DataS3Bucket": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "AccessControl": "Private",
+        "BucketName": {
+          "Fn::Join": [
+            "-",
+            [
+              {
+                "Ref": "Environment"
+              },
+              {
+                "Ref": "Project"
+              },
+              {
+                "Ref": "Category"
+              },
+              {
+                "Ref": "Component"
+              },
+              {
+                "Fn::If": [
+                  "CreateForUser",
+                  {
+                    "Ref": "User"
+                  },
+                  {
+                    "Fn::If": [
+                      "IsZone",
+                      "zone",
+                      "stage"
+                    ]
+                  }
+                ]
+              },
+          "s3"
+        ] ] },
+        "Tags": [
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          },
+          {
+            "Key": "Project",
+            "Value": {
+              "Ref": "Project"
+            }
+          },
+          {
+            "Key": "Component",
+            "Value": {
+              "Ref": "Component"
+            }
+          },
+          {
+            "Key": "Category",
+            "Value": {
+              "Ref": "Category"
+            }
+          },
+          {
+            "Key": "cost-environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          },
+          {
+            "Key": "cost-application",
+            "Value": {
+              "Ref": "Component"
+            }
+          },
+          {
+            "Key": "cost-role",
+            "Value": {
+              "Ref": "Category"
+            }
+          }
+        ],
+        "VersioningConfiguration": {
+          "Status": { "Fn::If": [ "VersioningIsRequired", "Enabled", "Suspended" ] }
+        },
+        "NotificationConfiguration": {
+                    "LambdaConfigurations": [
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-eap-sit/success/format%3Dcsv/table%3Dallowed_airs_dataset"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-eap-sit/success/format%3Dcsv/table%3Dmain_extract"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-eap-sit/success/format%3Dcsv/table%3Dbricksftp"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-eap-test/success/format%3Dcsv/table%3Dmain_extract"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-eap-test/success/format%3Dcsv/table%3Dbricksftp"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-eap-test/success/format%3Dcsv/table%3Dallowed_airs_dataset"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-eap-uat/success/format%3Dcsv/table%3Dallowed_airs_dataset"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-eap-uat/success/format%3Dcsv/table%3Dmain_extract"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-eap-uat/success/format%3Dcsv/table%3Dbricksftp"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-eap-nft/success/format%3Dcsv/table%3Dmain_extract"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-eap-nft/success/format%3Dcsv/table%3Dbricksftp"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-eap-nft/success/format%3Dcsv/table%3Dallowed_airs_dataset"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-customer-offer-test/success/format%3Dcsv/table%3DCustomer"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-customer-offer-test/success/format%3Dcsv/table%3DOCR"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-customer-offer-test/success/format%3Dcsv/table%3DProduct"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-tot-test/success/format%3Dcsv/table%3DTransferOfTerms"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-customer-offer-sit/success/format%3Dcsv/table%3DCustomer"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-customer-offer-sit/success/format%3Dcsv/table%3DOCR"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-customer-offer-sit/success/format%3Dcsv/table%3DProduct"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-tot-sit/success/format%3Dcsv/table%3DTransferOfTerms"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-customer-offer-uat/success/format%3Dcsv/table%3DCustomer"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-customer-offer-uat/success/format%3Dcsv/table%3DOCR"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-customer-offer-uat/success/format%3Dcsv/table%3DProduct"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-tot-uat/success/format%3Dcsv/table%3DTransferOfTerms"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-customer-offer-nft/success/format%3Dcsv/table%3DCustomer"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-customer-offer-nft/success/format%3Dcsv/table%3DOCR"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-customer-offer-nft/success/format%3Dcsv/table%3DProduct"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Function": {
+                                        "Ref": "DIStudioLambdaARN"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "suffix",
+                                                    "Value": ".marker"
+                                                },
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-tot-nft/success/format%3Dcsv/table%3DTransferOfTerms"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        }
+                    ],
+                    "TopicConfigurations": [
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Topic": {
+                                        "Ref": "NotificationSnsTopic"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-eap-test/output"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Topic": {
+                                        "Ref": "NotificationSnsTopic"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-eap-sit/output"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Topic": {
+                                        "Ref": "NotificationSnsTopic"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-customer-offer-test/output"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Topic": {
+                                        "Ref": "NotificationSnsTopic"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-customer-offer-sit/output"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Topic": {
+                                        "Ref": "NotificationSnsTopic"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-tot-sit/output"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "CreateTestEvents",
+                                {
+                                    "Topic": {
+                                        "Ref": "NotificationSnsTopic"
+                                    },
+                                    "Event": "s3:ObjectCreated:*",
+                                    "Filter": {
+                                        "S3Key": {
+                                            "Rules": [
+                                                {
+                                                    "Name": "prefix",
+                                                    "Value": "nce-tot-test/output"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Event": "s3:ObjectCreated:*",
+                            "Topic": {
+                                "Ref": "NotificationSnsTopic"
+                            },
+                            "Filter": {
+                                "S3Key": {
+                                    "Rules": [
+                                        {
+                                            "Name": "prefix",
+                                            "Value": "dressipi_out"
+                                        }
+                                    ]
+                                }
+                            }
+                        },
+                        {
+                            "Event": "s3:ObjectCreated:*",
+                            "Topic": {
+                                "Ref": "NotificationSnsTopic"
+                            },
+                            "Filter": {
+                                "S3Key": {
+                                    "Rules": [
+                                        {
+                                            "Name": "prefix",
+                                            "Value": "sas_prod_recs"
+                                        }
+                                    ]
+                                }
+                            }
+                        },
+                        {
+                            "Event": "s3:ObjectCreated:*",
+                            "Topic": {
+                                "Ref": "NotificationSnsTopic"
+                            },
+                            "Filter": {
+                                "S3Key": {
+                                    "Rules": [
+                                        {
+                                            "Name": "prefix",
+                                            "Value": "revionics_auto"
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                }
+
+
+              }
+            },
+            {
+              "Event": "s3:ObjectCreated:*",
+              "Topic": { "Ref": "PublishCopyFileS3SNSTopic" },
+              "Filter": {
+                "S3Key": {
+                  "Rules": [
+                    { "Name": "prefix",
+                      "Value": "merged/d2d_social"},
+                    { "Name": "suffix",
+                      "Value": ".dat"}
+                  ]
+                }
+              }
+            },
+            {
+              "Event": "s3:ObjectCreated:*",
+              "Topic": { "Ref": "PublishCopyFileS3SNSTopic" },
+              "Filter": {
+                "S3Key": {
+                  "Rules": [
+                    { "Name": "prefix",
+                      "Value": "merged/d2d_kpi"},
+                    { "Name": "suffix",
+                      "Value": ".dat"}
+                  ]
+                }
+              }
+            },
+            {
+              "Event": "s3:ObjectCreated:*",
+              "Topic": { "Ref": "PublishCopyFileS3SNSTopic" },
+              "Filter": {
+                "S3Key": {
+                  "Rules": [
+                    { "Name": "prefix",
+                      "Value": "merged/d2d_digital"},
+                    { "Name": "suffix",
+                      "Value": ".dat"}
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+
+    "DataBucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Condition": "ApplyPolicy",
+      "Properties": {
+        "Bucket": { "Ref": "DataS3Bucket" },
+        "PolicyDocument": {
+          "Statement": [ { "Fn::If": [ "IsEncrypted", {
+            "Action": [
+              "s3:PutObject"
+            ],
+            "Effect": "Deny",
+            "Resource": { "Fn::If": [ "IsZone", { "Fn::Join" : [ "", [ "arn:aws:s3:::", { "Ref" : "DataS3Bucket" } , "/*" ] ] }, { "Ref": "AWS::NoValue" } ] },
+            "NotResource": { "Fn::If": [ "IsStage", { "Fn::Join" : [ "", [ "arn:aws:s3:::", { "Ref" : "DataS3Bucket" } , "/logs/emr/*" ] ] }, { "Ref": "AWS::NoValue" } ] },
+            "Principal": "*",
+            "Condition": {
+              "StringNotEquals": {
+                "s3:x-amz-server-side-encryption": "aws:kms"
+              }
+            }
+          }, { "Ref": "AWS::NoValue" } ]
+          }, { "Fn::If": [ "ReadAccessDefined", {
+            "Action": [
+              "s3:GetBucketLocation",
+              "s3:ListBucket"
+            ],
+            "Effect": "Allow",
+            "Resource": { "Fn::Join" : [ "", ["arn:aws:s3:::", { "Ref" : "DataS3Bucket" } ] ] },
+            "Principal": { "AWS": { "Ref": "ReadAccessAccountArns" } }
+          }, { "Ref": "AWS::NoValue" } ]
+          }, { "Fn::If": [ "ReadAccessDefined", {
+            "Action": [
+              "s3:GetObject*"
+            ],
+            "Effect": "Allow",
+            "Resource": { "Fn::Join" : [ "", ["arn:aws:s3:::", { "Ref" : "DataS3Bucket" }, "/*" ] ] },
+            "Principal": { "AWS": { "Ref": "ReadAccessAccountArns" } }
+          }, { "Ref": "AWS::NoValue" } ]
+          }, { "Fn::If": [ "WriteAccessDefined", {
+            "Action": [
+              "s3:GetBucketLocation",
+              "s3:ListBucket"
+            ],
+            "Effect": "Allow",
+            "Resource": { "Fn::Join" : [ "", ["arn:aws:s3:::", { "Ref" : "DataS3Bucket" }  ] ] },
+            "Principal": { "AWS": { "Ref": "WriteAccessAccountArns" } }
+          }, { "Ref": "AWS::NoValue" } ]
+          }, { "Fn::If": [ "WriteAccessDefined", {
+            "Action": [
+              "s3:GetObject*",
+              "s3:PutObject*"
+            ],
+            "Effect": "Allow",
+            "Resource": { "Fn::Join" : [ "", ["arn:aws:s3:::", { "Ref" : "DataS3Bucket" } , "/*" ] ] },
+            "Principal": { "AWS": { "Ref": "WriteAccessAccountArns" } }
+          }, { "Ref": "AWS::NoValue" } ] }
+        ] }
+      }
+    }
+  },
+
+  "Outputs": {
+    "DataS3Bucket": {
+      "Description": "The data s3 bucket",
+      "Value": { "Ref": "DataS3Bucket" }
+    },
+
+    "DataS3BucketArn": {
+      "Description": "The data s3 bucket arn",
+      "Value": { "Fn::Join" : [ "", ["arn:aws:s3:::", { "Ref" : "DataS3Bucket" }  ] ] }
+    },
+
+    "DataS3BucketObjectArn": {
+      "Description": "The data s3 bucket object arn",
+      "Value": { "Fn::Join" : [ "", ["arn:aws:s3:::", { "Ref" : "DataS3Bucket" } , "/*" ] ] }
+    }
+  }
+}

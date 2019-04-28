@@ -1,0 +1,690 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "CloudFormation template to create the SAS Trigger Lambda Function",
+
+  "Parameters": {
+    "Environment": {
+      "Description": "The environment",
+      "Type": "String"
+    },
+    "Project": {
+      "Description": "The project",
+      "Type": "String"
+    },
+    "Component": {
+      "Description": "The component",
+      "Type": "String"
+    },
+    "Category": {
+      "Description": "The category",
+      "Type": "String"
+    },
+    "ZoneOrStage": {
+      "Description": "Type for the s3 bucket",
+      "Type": "String",
+      "AllowedPattern": "zone|stage",
+      "ConstraintDescription": "must be either zone or stage"
+    },
+    "VpcId": {
+      "Description": "Select the ID of an existing VPC",
+      "Type": "AWS::EC2::VPC::Id"
+    },
+    "VpcCIDR": {
+      "Description": "Select the ID of an existing VPC",
+      "Type": "String",
+      "Default": "<enter-vpc-range>"
+    },
+    "PrivateSubnetZoneAId": {
+      "Description": "The subnet for the network interface",
+      "Type": "AWS::EC2::Subnet::Id"
+    },
+    "PrivateSubnetZoneBId": {
+      "Description": "The subnet for the network interface",
+      "Type": "AWS::EC2::Subnet::Id"
+    },
+    "SupportSecurityGroupId": {
+      "Description": "The support security group id",
+      "Type": "AWS::EC2::SecurityGroup::Id"
+    },
+    "AwsApiSecurityGroupId": {
+      "Description": "The aws api security group id",
+      "Type": "AWS::EC2::SecurityGroup::Id"
+    },
+    "ServicesSecurityGroupId": {
+      "Description": "The services security group id",
+      "Type": "AWS::EC2::SecurityGroup::Id"
+    },
+    "Sasip": {
+      "Description": "Host name of SAS DI Server for the Lambda function to execute the shell script.",
+      "Type": "String",
+      "Default": "compute-engine.sas.test.sdghs-engineering.internal"
+    },
+    "LambdaName": {
+      "Description": "The lambda name",
+      "Type": "String",
+      "Default": "undefined"
+    },
+    "LambdaDescription": {
+      "Description": "The lambda description",
+      "Type": "String",
+      "Default": "undefined"
+    },
+    "LambdaHandler": {
+      "Description": "The lambda handler",
+      "Type": "String",
+      "Default": "lambda_handler"
+    },
+    "LambdaRuntime": {
+      "Description": "The lambda runtime",
+      "Type": "String",
+      "Default": "python3.6"
+    },
+    "LambdaMemory": {
+      "Description": "The lambda memory",
+      "Type": "String",
+      "Default": "undefined"
+    },
+    "LambdaTimeout": {
+      "Description": "The lambda timeout",
+      "Type": "String",
+      "Default": "undefined"
+    },
+    "LambdaIamRoleArn": {
+      "Description": "The role to give permissions to the lambda",
+      "Type": "String",
+      "Default": "arn:aws:iam::066901268285:role/test/hubs/data/publish/test-hubs-data-publish-iamrole-LambdaIamRole-DJIO6UTG50TJ"
+    },
+    "DataS3Bucket": {
+      "Description": "The S3 bucket where the lambda is stored",
+      "Type": "String"
+    },
+    "DataKmsKey": {
+      "Description": "The kms key for the lambda function",
+      "Type": "String"
+    },
+    "LambdaZip": {
+      "Description": "The key/file Lambda zip file in S3",
+      "Type": "String",
+      "Default": "undefined"
+    },
+    "sshusername": {
+      "Description": "ssh username for EC2 server",
+      "Type": "String",
+      "Default": "undefined"
+    },
+    "sshkeyname": {
+      "Description": "ssh private key name for EC2 server",
+      "Type": "String",
+      "Default": "undefined"
+    },
+    "InsideVpc": {
+      "Description": "Deploy inside the vpc",
+      "Type": "String",
+      "AllowedPattern": "true|false",
+      "ConstraintDescription": "must be either true or false",
+      "Default": "true"
+    },
+    "ProcessedS3Bucket": {
+      "Description": "Processed bucket name",
+      "Type": "String"
+    },
+    "keyS3Bucket": {
+      "Description": "private key bucket name for SAS DI Server",
+      "Type": "String",
+      "Default": "test-hubs-data-land-stage-s3"
+    },
+    "keyprefixS3Bucket": {
+            "Description": "private key bucket name for SAS DI Server",
+            "Type": "String",
+            "Default": "credentials/SASDILambdaKey/sasdiserverkey"
+    }
+
+
+  },
+
+  "Conditions": {
+    "DeployInsideVpc": {
+      "Fn::Equals": [
+        "true",
+        {
+          "Ref": "InsideVpc"
+        }
+      ]
+    },
+    "LambdaPythonDefined": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            "undefined",
+            {
+              "Ref": "LambdaZip"
+            }
+          ]
+        }
+      ]
+    },
+    "LambdaIamRoleDefined": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            "undefined",
+            {
+              "Ref": "LambdaIamRoleArn"
+            }
+          ]
+        }
+      ]
+    },
+    "CreateLambdaFunction": {
+      "Fn::And": [
+        {
+          "Condition": "LambdaPythonDefined"
+        },
+        {
+          "Condition": "LambdaIamRoleDefined"
+        }
+      ]
+    },
+    "IsStage": {
+      "Fn::Equals": [
+        "stage",
+        {
+          "Ref": "ZoneOrStage"
+        }
+      ]
+    },
+    "IsZone": {
+      "Fn::Equals": [
+        "zone",
+        {
+          "Ref": "ZoneOrStage"
+        }
+      ]
+    }
+  },
+
+  "Resources": {
+    "LambdaSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupName": {
+          "Fn::Join": [
+            "_",
+            [
+              {
+                "Ref": "Environment"
+              },
+              {
+                "Ref": "Project"
+              },
+              {
+                "Ref": "Category"
+              },
+              {
+                "Ref": "Component"
+              },
+              "sg"
+            ]
+          ]
+        },
+        "GroupDescription": "SAS Security Group for Lambda to connect to EC2 Instance",
+        "VpcId": {
+          "Ref": "VpcId"
+        },
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "22",
+            "ToPort": "22",
+             "CidrIp": {
+                  "Ref": "VpcCIDR"
+             }
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "53",
+            "ToPort": "53",
+             "CidrIp": {
+                  "Ref": "VpcCIDR"
+             }
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "53",
+            "ToPort": "53",
+             "CidrIp": {
+                  "Ref": "VpcCIDR"
+             }
+          }
+        ]
+      }
+    },
+    "LambdaEC2Connect": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "Description": {
+          "Ref": "LambdaDescription"
+        },
+        "FunctionName": {
+          "Fn::Join": [
+            "_",
+            [
+              {
+                "Ref": "Environment"
+              },
+              {
+                "Ref": "Project"
+              },
+              {
+                "Ref": "Category"
+              },
+              {
+                "Ref": "Component"
+              },
+              {
+                "Ref": "LambdaName"
+              },
+              "lambda"
+            ]
+          ]
+        },
+        "KmsKeyArn": {
+          "Fn::Join": [
+            "/",
+            [
+              {
+                "Fn::Join": [
+                  ":",
+                  [
+                    "arn",
+                    "aws",
+                    "kms",
+                    {
+                      "Ref": "AWS::Region"
+                    },
+                    {
+                      "Ref": "AWS::AccountId"
+                    },
+                    "key"
+                  ]
+                ]
+              },
+              {
+                "Ref": "DataKmsKey"
+              }
+            ]
+          ]
+        },
+        "Environment": {
+          "Variables": {
+            "Fn::If": [
+              "IsZone",
+              {
+                "format": "name,s3_file,script (no spaces)",
+                "host": {
+                  "Ref": "Sasip"
+                },
+                "bucketname": {
+                  "Ref": "keyS3Bucket"
+                },
+                "prefix": {
+                  "Ref": "keyprefixS3Bucket"
+                },
+                "ssh_username": {
+                  "Ref": "sshusername"
+                },
+                "trigger1": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "Allowed Air,",
+                      "success/format%3Dcsv/table%3Dallowed_airs_dataset,",
+                      "/sas/install/ds-aws-shell/bin/sasservice/getAllowedAirsDataset.sh"
+                    ]
+                  ]
+                },
+                "trigger2": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "EAP,",
+                      "success/format%3Dcsv/table%3Dmain_extract,",
+                      "/sas/install/ds-aws-shell/bin/sasservice/getEap.sh"
+                    ]
+                  ]
+                },
+                "trigger3": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "Account List Request,",
+                      "success/format%3Dcsv/table%3Dbricksftp,",
+                      "/sas/install/ds-aws-shell/bin/sasservice/getAccountListReq.sh"
+                    ]
+                  ]
+                },
+                "trigger4": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "Customer,",
+                      "success/format%3Dcsv/table%3DCustomer,",
+                      "/sas/install/ds-aws-shell/bin/sasservice/getOutboundMarketingCustomer.sh"
+                    ]
+                  ]
+                },
+                "trigger5": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "OCR,",
+                      "success/format%3Dcsv/table%3DOCR,",
+                      "/sas/install/ds-aws-shell/bin/sasservice/getOutboundMarketingOCR.sh"
+                    ]
+                  ]
+                },
+                "trigger6": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "Product,",
+                      "success/format%3Dcsv/table%3DProduct,",
+                      "/sas/install/ds-aws-shell/bin/sasservice/getOutboundMarketingProduct.sh"
+                    ]
+                  ]
+                },
+                "trigger7": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "TOT,",
+                      "success/format%3Dcsv/table%3DTransferOfTerms,",
+                      "/sas/install/ds-aws-shell/bin/sasservice/getTransferOfTerms.sh"
+                    ]
+                  ]
+                },
+                "ENVIRONMENT": {
+                  "Ref": "Environment"
+                },
+                "PROJECT": {
+                  "Ref": "Project"
+                },
+                "CATEGORY": {
+                  "Ref": "Category"
+                },
+                "ZONE": {
+                  "Ref": "Component"
+                },
+                "COMPONENT": {
+                  "Ref": "Component"
+                },
+                "REGION": {
+                  "Ref": "AWS::Region"
+                },
+                "WITHIN_VPC": {
+                  "Ref": "InsideVpc"
+                }
+              },
+              {
+                "format": "name,s3_file,script (no spaces)",
+                "host": {
+                  "Ref": "Sasip"
+                },
+                "bucketname": {
+                  "Ref": "keyS3Bucket"
+                },
+                "prefix": {
+                  "Ref": "keyprefixS3Bucket"
+                },
+                "ssh_username": {
+                  "Ref": "sshusername"
+                },
+                "trigger1": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "Allowed Air,",
+                      "success/format%3Dcsv/table%3Dallowed_airs_dataset,",
+                      "/sas/install/ds-aws-shell/bin/sasservice/getAllowedAirsDataset.sh"
+                    ]
+                  ]
+                },
+                "trigger2": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "EAP,",
+                      "success/format%3Dcsv/table%3Dmain_extract,",
+                      "/sas/install/ds-aws-shell/bin/sasservice/getEap.sh"
+                    ]
+                  ]
+                },
+                "trigger3": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "Account List Request,",
+                      "success/format%3Dcsv/table%3Dbricksftp,",
+                      "/sas/install/ds-aws-shell/bin/sasservice/getAccountListReq.sh"
+                    ]
+                  ]
+                },
+                "trigger4": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "Customer,",
+                      "success/format%3Dcsv/table%3DCustomer,",
+                      "/sas/install/ds-aws-shell/bin/sasservice/getOutboundMarketingCustomer.sh"
+                    ]
+                  ]
+                },
+                "trigger5": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "OCR,",
+                      "success/format%3Dcsv/table%3DOCR,",
+                      "/sas/install/ds-aws-shell/bin/sasservice/getOutboundMarketingOCR.sh"
+                    ]
+                  ]
+                },
+                "trigger6": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "Product,",
+                      "success/format%3Dcsv/table%3DProduct,",
+                      "/sas/install/ds-aws-shell/bin/sasservice/getOutboundMarketingProduct.sh"
+                    ]
+                  ]
+                },
+                "trigger7": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "TOT,",
+                      "success/format%3Dcsv/table%3DTransferOfTerms,",
+                      "/sas/install/ds-aws-shell/bin/sasservice/getTransferOfTerms.sh"
+                    ]
+                  ]
+                },
+                "ENVIRONMENT": {
+                  "Ref": "Environment"
+                },
+                "PROJECT": {
+                  "Ref": "Project"
+                },
+                "CATEGORY": {
+                  "Ref": "Category"
+                },
+                "STAGE": {
+                  "Ref": "Component"
+                },
+                "COMPONENT": {
+                  "Ref": "Component"
+                },
+                "REGION": {
+                  "Ref": "AWS::Region"
+                },
+                "WITHIN_VPC": {
+                  "Ref": "InsideVpc"
+                }
+              }
+            ]
+          }
+        },
+        "Code": {
+          "S3Bucket": {
+            "Ref": "DataS3Bucket"
+          },
+          "S3Key": {
+            "Ref": "LambdaZip"
+          }
+        },
+        "Role": {
+          "Ref": "LambdaIamRoleArn"
+        },
+        "VpcConfig": {
+          "Fn::If": [
+            "DeployInsideVpc",
+            {
+              "SecurityGroupIds": [
+                {
+                  "Ref": "SupportSecurityGroupId"
+                },
+                {
+                  "Ref": "AwsApiSecurityGroupId"
+                },
+                {
+                  "Ref": "ServicesSecurityGroupId"
+                },
+                {
+                  "Ref": "LambdaSecurityGroup"
+                }
+              ],
+              "SubnetIds": [
+                {
+                  "Ref": "PrivateSubnetZoneAId"
+                },
+                {
+                  "Ref": "PrivateSubnetZoneBId"
+                }
+              ]
+            },
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        },
+        "Timeout": {
+          "Ref": "LambdaTimeout"
+        },
+        "Handler": {
+          "Fn::Join": [
+            ".",
+            [
+              "lambda_function",
+              {
+                "Ref": "LambdaHandler"
+              }
+            ]
+          ]
+        },
+        "Runtime": {
+          "Ref": "LambdaRuntime"
+        },
+        "MemorySize": {
+          "Ref": "LambdaMemory"
+        }
+      }
+    },
+    "LambdaEC2ConnectLatestVersion": {
+      "Type": "AWS::Lambda::Version",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "LambdaEC2Connect"
+        }
+      }
+    },
+    "LambdaEC2ConnectLatestAlias": {
+      "Type": "AWS::Lambda::Alias",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "LambdaEC2Connect"
+        },
+        "FunctionVersion": "$LATEST",
+        "Name": {
+          "Fn::Join": [
+            "_",
+            [
+              {
+                "Ref": "Environment"
+              },
+              {
+                "Ref": "Project"
+              },
+              {
+                "Ref": "Category"
+              },
+              {
+                "Ref": "Component"
+              },
+              {
+                "Ref": "LambdaName"
+              },
+              "latest",
+              "lambda"
+            ]
+          ]
+        }
+      }
+    },
+    "LambdaPermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "LambdaEC2ConnectLatestAlias"
+        },
+        "Action": "lambda:InvokeFunction",
+        "Principal": "s3.amazonaws.com",
+        "SourceAccount": {
+          "Ref": "AWS::AccountId"
+        },
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:aws:s3:::",
+              {
+                "Ref": "ProcessedS3Bucket"
+              }
+            ]
+          ]
+        }
+      }
+    }
+  },
+
+  "Outputs": {
+    "LambdaFunctionId": {
+      "Description": "The lambda function id",
+      "Value": {
+        "Ref": "LambdaEC2Connect"
+      }
+    },
+    "LambdaFunctionArn": {
+      "Description": "The lambda function alias arn",
+      "Value": {
+        "Ref": "LambdaEC2ConnectLatestAlias"
+      }
+    },
+    "LambdaSecurityGroup": {
+      "Description": "The sas trigger lambda security group name",
+      "Value": {
+        "Ref": "LambdaSecurityGroup"
+      }
+    }
+
+  }
+}
